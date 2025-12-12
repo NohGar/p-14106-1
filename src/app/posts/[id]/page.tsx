@@ -3,37 +3,143 @@
 import { apiFetch } from "@/lib/backend/client";
 import type { PostCommentDto, PostWithContentDto } from "@/type/post";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { use, useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 
-export default function Page({ params }: { params: Promise<{ id: number }> }) {
-  const { id } = use(params);
-  const router = useRouter();
-
+function usePost(id: number) {
   const [post, setPost] = useState<PostWithContentDto | null>(null);
+
+  useEffect(() => {
+    apiFetch(`/api/v1/posts/${id}`)
+      .then(setPost)
+      .catch((error) => {
+        alert(`${error.resultCode} : ${error.msg}`);
+      });
+  }, []);
+
+  const deletePost = (id: number, onSuccess: () => void) => {
+    apiFetch(`/api/v1/posts/${id}`, {
+      method: "DELETE",
+    }).then(onSuccess);
+  };
+
+  return {
+    post,
+    deletePost,
+  };
+}
+
+function usePostComments(id: number) {
   const [postComments, setPostComments] = useState<PostCommentDto[] | null>(
     null
   );
 
-  const deletePost = (id: number) => {
-    apiFetch(`/api/v1/posts/${id}`, {
+  useEffect(() => {
+    apiFetch(`/api/v1/posts/${id}/comments`)
+      .then(setPostComments)
+      .catch((error) => {
+        alert(`${error.resultCode} : ${error.msg}`);
+      });
+  }, []);
+
+  const deleteComment = (
+    id: number,
+    commentId: number,
+    onSuccess: (data: any) => void
+  ) => {
+    apiFetch(`/api/v1/posts/${id}/comments/${commentId}`, {
       method: "DELETE",
     }).then((data) => {
-      alert(data.msg);
+      if (postComments == null) return;
+
+      setPostComments(postComments.filter((c) => c.id != commentId));
+
+      onSuccess(data);
+    });
+  };
+
+  const writeComment = (
+    id: number,
+    content: string,
+    onSuccess: (data: any) => void
+  ) => {
+    apiFetch(`/api/v1/posts/${id}/comments`, {
+      method: "POST",
+      body: JSON.stringify({
+        content,
+      }),
+    }).then((data) => {
+      if (postComments == null) return;
+
+      setPostComments([...postComments, data.data]);
+
+      onSuccess(data);
+    });
+  };
+
+  return {
+    postComments,
+    deleteComment,
+    writeComment,
+  };
+}
+
+function PostInfo({
+  postState,
+}: {
+  postState: ReturnType<typeof usePost>;
+}) {
+  const router = useRouter();
+  const { post, deletePost: _deletePost } = postState;
+
+  if (post == null) return <div>로딩중...</div>;
+
+  const deletePost = () => {
+    if (!confirm(`${post.id}번 글을 정말로 삭제하시겠습니까?`)) return;
+
+    _deletePost(post.id, () => {
       router.replace("/posts");
     });
   };
 
-  const deleteComment = (id: number, commentId: number) => {
-    apiFetch(`/api/v1/posts/${id}/comments/${commentId}`, {
-      method: "DELETE",
-    }).then((data) => {
+  return (
+    <>
+      <div>번호 : {post.id}</div>
+      <div>제목: {post.title}</div>
+      <div style={{ whiteSpace: "pre-line" }}>{post.content}</div>
+
+      <div className="flex gap-2">
+        <button
+          className="p-2 rounded border"
+          onClick={deletePost}
+        >
+          삭제
+        </button>
+        <Link className="p-2 rounded border" href={`/posts/${post.id}/edit`}>
+          수정
+        </Link>
+      </div>
+    </>
+  );
+}
+
+function PostCommentWriteAndList({
+  id,
+  postCommentsState,
+}: {
+  id: number;
+  postCommentsState: ReturnType<typeof usePostComments>;
+}) {
+  const { postComments, deleteComment: _deleteComment, writeComment } = postCommentsState;
+
+  if (postComments == null) return <div>로딩중...</div>;
+
+  const deleteComment = (commentId: number) => {
+    if (!confirm(`${id}번 댓글을 정말로 삭제하시겠습니까?`)) return;
+
+    _deleteComment(id, commentId, (data) => {
       alert(data.msg);
-
-      if (postComments == null) return;
-
-      setPostComments(postComments.filter((c) => c.id != commentId));
-    });
+    })
   };
 
   const handleCommentWriteFormSubmit = (
@@ -55,52 +161,20 @@ export default function Page({ params }: { params: Promise<{ id: number }> }) {
       return;
     }
 
-    apiFetch(`/api/v1/posts/${id}/comments`, {
-      method: "POST",
-      body: JSON.stringify({
-        content: contentTextarea.value,
-      }),
-    }).then((data) => {
+    if (contentTextarea.value.length < 2) {
+      alert("댓글 내용을 2자 이상 입력해주세요.");
+      contentTextarea.focus();
+      return;
+    }
+
+    writeComment(id, contentTextarea.value, (data) => {
       alert(data.msg);
       contentTextarea.value = "";
-
-      if (postComments == null) return;
-
-      setPostComments([...postComments, data.data]);
     });
   };
 
-  useEffect(() => {
-    apiFetch(`/api/v1/posts/${id}`).then(setPost);
-
-    apiFetch(`/api/v1/posts/${id}/comments`).then(setPostComments);
-  }, []);
-
-  if (post == null) return <div>로딩중...</div>;
-
   return (
     <>
-      <h1>글 상세페이지</h1>
-
-      <div>번호 : {post.id}</div>
-      <div>제목: {post.title}</div>
-      <div style={{ whiteSpace: "pre-line" }}>{post.content}</div>
-
-      <div className="flex gap-2">
-        <button
-          className="p-2 rounded border"
-          onClick={() =>
-            confirm(`${post.id}번 글을 정말로 삭제하시겠습니까?`) &&
-            deletePost(post.id)
-          }
-        >
-          삭제
-        </button>
-        <Link className="p-2 rounded border" href={`/posts/${post.id}/edit`}>
-          수정
-        </Link>
-      </div>
-
       <h2>댓글 작성</h2>
 
       <form className="p-2" onSubmit={handleCommentWriteFormSubmit}>
@@ -108,6 +182,8 @@ export default function Page({ params }: { params: Promise<{ id: number }> }) {
           className="border p-2 rounded"
           name="content"
           placeholder="댓글 내용"
+          maxLength={100}
+          rows={5}
         />
         <button className="p-2 rounded border" type="submit">
           작성
@@ -129,10 +205,7 @@ export default function Page({ params }: { params: Promise<{ id: number }> }) {
               {comment.id} : {comment.content}
               <button
                 className="p-2 rounded border"
-                onClick={() =>
-                  confirm(`${comment.id}번 댓글을 정말로 삭제하시겠습니까?`) &&
-                  deleteComment(id, comment.id)
-                }
+                onClick={() => deleteComment(comment.id)}
               >
                 삭제
               </button>
@@ -140,6 +213,24 @@ export default function Page({ params }: { params: Promise<{ id: number }> }) {
           ))}
         </ul>
       )}
+    </>
+  );
+}
+
+export default function Page() {
+  const { id: idStr } = useParams<{ id: string }>();
+  const id = parseInt(idStr);
+
+  const postState = usePost(id);
+  const postCommentsState = usePostComments(id);
+
+  return (
+    <>
+      <h1>글 상세페이지</h1>
+
+      <PostInfo postState={postState} />
+
+      <PostCommentWriteAndList id={id} postCommentsState={postCommentsState} />
     </>
   );
 }
